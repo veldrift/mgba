@@ -185,6 +185,9 @@ int main(int argc, char * argv[]) {
 	if (!core) {
 		goto argsExit;
 	}
+	/* SDL defaults to full volume; headless leaves opts zeroed, which
+	   would scale every mixed sample to silence in _applyBias. */
+	core->opts.volume = 0x100;
 	core->init(core);
 	mCoreInitConfig(core, "headless");
 	mArgumentsApply(&args, NULL, 0, &core->config);

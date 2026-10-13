@@ -224,12 +224,14 @@ int main(int argc, char * argv[]) {
 		goto loadError;
 	}
 
-	if (headlessOpts.audioDump) {
+	if (headlessOpts.audioDump || headlessOpts.dumpFrames > 0) {
 		_dumpFramesTotal = headlessOpts.dumpFrames;
-		_dumpFile = VFileOpen(headlessOpts.audioDump, O_CREAT | O_TRUNC | O_WRONLY);
-		if (!_dumpFile) {
-			mLOG(STATUS, ERROR, "Failed to open audio dump \"%s\"", headlessOpts.audioDump);
-			goto loadError;
+		if (headlessOpts.audioDump) {
+			_dumpFile = VFileOpen(headlessOpts.audioDump, O_CREAT | O_TRUNC | O_WRONLY);
+			if (!_dumpFile) {
+				mLOG(STATUS, ERROR, "Failed to open audio dump \"%s\"", headlessOpts.audioDump);
+				goto loadError;
+			}
 		}
 		_dumpStream.videoDimensionsChanged = NULL;
 		_dumpStream.audioRateChanged = _dumpAudioRateChanged;

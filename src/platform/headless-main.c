@@ -28,6 +28,9 @@
 
 #include <errno.h>
 #include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #define HEADLESS_OPTIONS "S:R:"
 static const char* const headlessUsage =
@@ -76,8 +79,10 @@ void (*_armSwi32)(struct ARMCore* cpu, int immediate);
 
 static struct mAVStream _dumpStream;
 static struct VFile* _dumpFile = NULL;
+static FILE* _dumpFrames = NULL;
 static long _dumpFramesTotal = 0;
 static long _dumpFramesWritten = 0;
+static unsigned _dumpPairs = 0;
 
 static void _dumpAudioRateChanged(struct mAVStream* stream, unsigned rate);
 static void _dumpAudioFrame(struct mAVStream* stream, int16_t left, int16_t right);
@@ -96,6 +101,7 @@ static void _dumpAudioFrame(struct mAVStream* stream, int16_t left, int16_t righ
 	}
 	_dumpFile->write(_dumpFile, &left, sizeof(left));
 	_dumpFile->write(_dumpFile, &right, sizeof(right));
+	++_dumpPairs;
 }
 
 static void _dumpVideoFrame(struct mAVStream* stream, const mColor* buffer, size_t stride) {
@@ -106,6 +112,9 @@ static void _dumpVideoFrame(struct mAVStream* stream, const mColor* buffer, size
 		return;
 	}
 	++_dumpFramesWritten;
+	if (_dumpFrames) {
+		fprintf(_dumpFrames, "%ld,%u\n", _dumpFramesWritten, _dumpPairs);
+	}
 	if (_dumpFramesWritten >= _dumpFramesTotal) {
 		_closeDump();
 		_dispatchExiting = true;
@@ -113,6 +122,10 @@ static void _dumpVideoFrame(struct mAVStream* stream, const mColor* buffer, size
 }
 
 static void _closeDump(void) {
+	if (_dumpFrames) {
+		fclose(_dumpFrames);
+		_dumpFrames = NULL;
+	}
 	if (!_dumpFile) {
 		return;
 	}
@@ -232,6 +245,20 @@ int main(int argc, char * argv[]) {
 				mLOG(STATUS, ERROR, "Failed to open audio dump \"%s\"", headlessOpts.audioDump);
 				goto loadError;
 			}
+		{
+			size_t pathLen = strlen(headlessOpts.audioDump);
+			char* csvPath = malloc(pathLen + 5);
+			if (csvPath) {
+				memcpy(csvPath, headlessOpts.audioDump, pathLen);
+				memcpy(csvPath + pathLen, ".csv", 5);
+				_dumpFrames = fopen(csvPath, "w");
+				free(csvPath);
+			}
+			if (!_dumpFrames) {
+				mLOG(STATUS, ERROR, "Failed to open frame map");
+				goto loadError;
+			}
+		}
 		}
 		_dumpStream.videoDimensionsChanged = NULL;
 		_dumpStream.audioRateChanged = _dumpAudioRateChanged;

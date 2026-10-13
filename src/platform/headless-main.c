@@ -128,7 +128,7 @@ int main(int argc, char * argv[]) {
 	int uncleanExit = 1;
 	size_t i;
 
-	struct HeadlessOpts headlessOpts = { 3, NULL, NULL, 0 };
+	struct HeadlessOpts headlessOpts = { .exitSwiImmediate = 3 };
 	StringListInit(&headlessOpts.scripts, 0);
 	struct mSubParser subparser = {
 		.usage = headlessUsage,

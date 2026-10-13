@@ -49,7 +49,7 @@ static const struct option _options[] = {
 	{ "savestate", required_argument, 0, 't' },
 	{ "patch",     required_argument, 0, 'p' },
 #ifdef ENABLE_SCRIPTING
-	{ "script",    required_argument, 0, 'S' },
+	{ "script",    required_argument, 0, '\0' },
 #endif
 	{ "version",   no_argument, 0, '\0' },
 	{ 0, 0, 0, 0 }
@@ -86,9 +86,6 @@ bool mArgumentsParse(struct mArguments* args, int argc, char* const* argv, struc
 	int ch;
 	char options[128] =
 		"b:c:C:hl:p:s:t:"
-#ifdef ENABLE_SCRIPTING
-		"S"
-#endif
 #ifdef USE_EDITLINE
 		"d"
 #endif
@@ -133,6 +130,11 @@ bool mArgumentsParse(struct mArguments* args, int argc, char* const* argv, struc
 			if (strcmp(opt->name, "version") == 0) {
 				args->showVersion = true;
 			} else {
+#ifdef ENABLE_SCRIPTING
+				if (strcmp(opt->name, "script") == 0) {
+					args->scriptFile = strdup(optarg);
+				}
+#endif
 				for (i = 0; i < nSubparsers; ++i) {
 					if (subparsers[i].parseLong) {
 						ok = subparsers[i].parseLong(&subparsers[i], opt->name, optarg) || ok;
@@ -176,11 +178,6 @@ bool mArgumentsParse(struct mArguments* args, int argc, char* const* argv, struc
 		case 's':
 			args->frameskip = atoi(optarg);
 			break;
-#ifdef ENABLE_SCRIPTING
-		case 'S':
-			args->scriptFile = strdup(optarg);
-			break;
-#endif
 		case 't':
 			args->savestate = strdup(optarg);
 			break;

@@ -37,12 +37,16 @@ static const char* const headlessUsage =
 #ifdef ENABLE_SCRIPTING
 	"  --script FILE    Run a script on start. Can be passed multiple times\n"
 #endif
+	"  --audio-dump FILE  Write native-rate s16 stereo audio to FILE\n"
+	"  --dump-frames N    Stop after N video frames (0 = run until killed)\n"
 	;
 
 struct HeadlessOpts {
 	int exitSwiImmediate;
 	char* returnCodeRegister;
 	struct StringList scripts;
+	char* audioDump;
+	long dumpFrames;
 };
 
 static void _headlessShutdown(int signal);
@@ -70,6 +74,53 @@ void (*_armSwi16)(struct ARMCore* cpu, int immediate);
 void (*_armSwi32)(struct ARMCore* cpu, int immediate);
 #endif
 
+static struct mAVStream _dumpStream;
+static struct VFile* _dumpFile = NULL;
+static long _dumpFramesTotal = 0;
+static long _dumpFramesWritten = 0;
+
+static void _dumpAudioRateChanged(struct mAVStream* stream, unsigned rate);
+static void _dumpAudioFrame(struct mAVStream* stream, int16_t left, int16_t right);
+static void _dumpVideoFrame(struct mAVStream* stream, const mColor* buffer, size_t stride);
+static void _closeDump(void);
+
+static void _dumpAudioRateChanged(struct mAVStream* stream, unsigned rate) {
+	UNUSED(stream);
+	mLOG(STATUS, INFO, "Audio dump: sample rate %u Hz", rate);
+}
+
+static void _dumpAudioFrame(struct mAVStream* stream, int16_t left, int16_t right) {
+	UNUSED(stream);
+	if (!_dumpFile) {
+		return;
+	}
+	_dumpFile->write(_dumpFile, &left, sizeof(left));
+	_dumpFile->write(_dumpFile, &right, sizeof(right));
+}
+
+static void _dumpVideoFrame(struct mAVStream* stream, const mColor* buffer, size_t stride) {
+	UNUSED(stream);
+	UNUSED(buffer);
+	UNUSED(stride);
+	if (_dumpFramesTotal <= 0) {
+		return;
+	}
+	++_dumpFramesWritten;
+	if (_dumpFramesWritten >= _dumpFramesTotal) {
+		_closeDump();
+		_dispatchExiting = true;
+	}
+}
+
+static void _closeDump(void) {
+	if (!_dumpFile) {
+		return;
+	}
+	_dumpFile->close(_dumpFile);
+	_dumpFile = NULL;
+	mLOG(STATUS, INFO, "Audio dump: %ld frames", _dumpFramesWritten);
+}
+
 int main(int argc, char * argv[]) {
 	signal(SIGINT, _headlessShutdown);
 
@@ -77,7 +128,7 @@ int main(int argc, char * argv[]) {
 	int uncleanExit = 1;
 	size_t i;
 
-	struct HeadlessOpts headlessOpts = { 3, NULL };
+	struct HeadlessOpts headlessOpts = { 3, NULL, NULL, 0 };
 	StringListInit(&headlessOpts.scripts, 0);
 	struct mSubParser subparser = {
 		.usage = headlessUsage,
@@ -87,6 +138,14 @@ int main(int argc, char * argv[]) {
 		.longOptions = (struct mOption[]) {
 			{
 				.name = "script",
+				.arg = true,
+			},
+			{
+				.name = "audio-dump",
+				.arg = true,
+			},
+			{
+				.name = "dump-frames",
 				.arg = true,
 			},
 			{0}
@@ -165,6 +224,21 @@ int main(int argc, char * argv[]) {
 		goto loadError;
 	}
 
+	if (headlessOpts.audioDump) {
+		_dumpFramesTotal = headlessOpts.dumpFrames;
+		_dumpFile = VFileOpen(headlessOpts.audioDump, O_CREAT | O_TRUNC | O_WRONLY);
+		if (!_dumpFile) {
+			mLOG(STATUS, ERROR, "Failed to open audio dump \"%s\"", headlessOpts.audioDump);
+			goto loadError;
+		}
+		_dumpStream.videoDimensionsChanged = NULL;
+		_dumpStream.audioRateChanged = _dumpAudioRateChanged;
+		_dumpStream.postVideoFrame = _dumpVideoFrame;
+		_dumpStream.postAudioFrame = _dumpAudioFrame;
+		_dumpStream.postAudioBuffer = NULL;
+		core->setAVStream(core, &_dumpStream);
+	}
+
 #ifdef ENABLE_DEBUGGERS
 	struct mDebugger debugger;
 	mDebuggerInit(&debugger);
@@ -226,6 +300,7 @@ int main(int argc, char * argv[]) {
 	do {
 		core->runLoop(core);
 	} while (!_dispatchExiting);
+	_closeDump();
 	cleanExit = true;
 
 scriptsError:
@@ -245,12 +320,14 @@ scriptsError:
 #endif
 
 loadError:
+	_closeDump();
 	mStandardLoggerDeinit(&_logger);
 	mCoreConfigDeinit(&core->config);
 	core->deinit(core);
 	if (_returnCodeRegister) {
 		free(_returnCodeRegister);
 	}
+	free(headlessOpts.audioDump);
 
 argsExit:
 	for (i = 0; i < StringListSize(&headlessOpts.scripts); ++i) {
@@ -361,8 +438,24 @@ static bool _parseHeadlessOpts(struct mSubParser* parser, int option, const char
 
 static bool _parseLongHeadlessOpts(struct mSubParser* parser, const char* option, const char* arg) {
 	struct HeadlessOpts* opts = parser->opts;
+	char* parseEnd;
+	long frames;
 	if (strcmp(option, "script") == 0) {
 		*StringListAppend(&opts->scripts) = strdup(arg);
+		return true;
+	}
+	if (strcmp(option, "audio-dump") == 0) {
+		free(opts->audioDump);
+		opts->audioDump = strdup(arg);
+		return true;
+	}
+	if (strcmp(option, "dump-frames") == 0) {
+		errno = 0;
+		frames = strtol(arg, &parseEnd, 0);
+		if (errno || frames < 0 || *parseEnd) {
+			return false;
+		}
+		opts->dumpFrames = frames;
 		return true;
 	}
 	return false;

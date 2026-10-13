@@ -20,6 +20,9 @@ struct mArguments {
 	char* cheatsFile;
 	char* savestate;
 	char* bios;
+#ifdef ENABLE_SCRIPTING
+	char* scriptFile;
+#endif
 	int logLevel;
 	int frameskip;
 

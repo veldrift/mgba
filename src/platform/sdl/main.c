@@ -8,6 +8,9 @@
 #include <mgba/internal/debugger/cli-debugger.h>
 
 #ifdef ENABLE_SCRIPTING
+#include <mgba/core/log.h>
+#include <mgba/script.h>
+#include <mgba/script/context.h>
 #include <mgba/core/scripting.h>
 
 #ifdef ENABLE_PYTHON
@@ -219,6 +222,21 @@ int mSDLRun(struct mSDLRenderer* renderer, struct mArguments* args) {
 #endif
 #endif
 
+#ifdef ENABLE_SCRIPTING
+	struct mScriptContext scriptContext;
+	mScriptContextInit(&scriptContext);
+	mScriptContextAttachStdlib(&scriptContext);
+	mScriptContextAttachImage(&scriptContext);
+	mScriptContextAttachLogger(&scriptContext, NULL);
+	mScriptContextRegisterEngines(&scriptContext);
+	mScriptContextAttachCore(&scriptContext, renderer->core);
+	if (args->scriptFile) {
+		if (!mScriptContextLoadFile(&scriptContext, args->scriptFile)) {
+			mLOG(STATUS, ERROR, "Failed to load script");
+		}
+	}
+#endif
+
 #ifdef ENABLE_DEBUGGERS
 	struct mDebugger debugger;
 	mDebuggerInit(&debugger);
@@ -287,6 +305,9 @@ int mSDLRun(struct mSDLRenderer* renderer, struct mArguments* args) {
 
 #ifdef ENABLE_SCRIPTING
 	mScriptBridgeDestroy(bridge);
+	if (args->scriptFile) {
+		mScriptContextDeinit(&scriptContext);
+	}
 #endif
 
 #ifdef ENABLE_DEBUGGERS

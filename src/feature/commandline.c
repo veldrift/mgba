@@ -48,6 +48,9 @@ static const struct option _options[] = {
 	{ "log-level", required_argument, 0, 'l' },
 	{ "savestate", required_argument, 0, 't' },
 	{ "patch",     required_argument, 0, 'p' },
+#ifdef ENABLE_SCRIPTING
+	{ "script",    required_argument, 0, 'S' },
+#endif
 	{ "version",   no_argument, 0, '\0' },
 	{ 0, 0, 0, 0 }
 };
@@ -83,6 +86,9 @@ bool mArgumentsParse(struct mArguments* args, int argc, char* const* argv, struc
 	int ch;
 	char options[128] =
 		"b:c:C:hl:p:s:t:"
+#ifdef ENABLE_SCRIPTING
+		"S"
+#endif
 #ifdef USE_EDITLINE
 		"d"
 #endif
@@ -170,6 +176,11 @@ bool mArgumentsParse(struct mArguments* args, int argc, char* const* argv, struc
 		case 's':
 			args->frameskip = atoi(optarg);
 			break;
+#ifdef ENABLE_SCRIPTING
+		case 'S':
+			args->scriptFile = strdup(optarg);
+			break;
+#endif
 		case 't':
 			args->savestate = strdup(optarg);
 			break;
@@ -306,6 +317,10 @@ void mArgumentsDeinit(struct mArguments* args) {
 
 	free(args->bios);
 	args->bios = 0;
+#ifdef ENABLE_SCRIPTING
+	free(args->scriptFile);
+	args->scriptFile = 0;
+#endif
 
 	HashTableDeinit(&args->configOverrides);
 }
@@ -386,6 +401,9 @@ void usage(const char* arg0, const char* prologue, const char* epilogue, const s
 	     "  -t, --savestate FILE       Load savestate when starting\n"
 	     "  -p, --patch FILE           Apply a specified patch file when running\n"
 	     "  -s, --frameskip N          Skip every N frames\n"
+#ifdef ENABLE_SCRIPTING
+	     "  -S, --script FILE          Run Lua script on startup\n"
+#endif
 	     "  --version                  Print version and exit"
 	);
 	int i;

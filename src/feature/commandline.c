@@ -133,6 +133,7 @@ bool mArgumentsParse(struct mArguments* args, int argc, char* const* argv, struc
 #ifdef ENABLE_SCRIPTING
 				if (strcmp(opt->name, "script") == 0) {
 					args->scriptFile = strdup(optarg);
+					ok = true;
 				}
 #endif
 				for (i = 0; i < nSubparsers; ++i) {

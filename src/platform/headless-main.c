@@ -42,6 +42,8 @@ static const char* const headlessUsage =
 #endif
 	"  --audio-dump FILE  Write native-rate s16 stereo audio to FILE\n"
 	"  --dump-frames N    Stop after N video frames (0 = run until killed)\n"
+	"  --video-dump FILE  Write raw mColor video frames to FILE\n"
+	"  --video-dump-from N  First video frame to dump (default 1)\n"
 	;
 
 struct HeadlessOpts {
@@ -50,6 +52,8 @@ struct HeadlessOpts {
 	struct StringList scripts;
 	char* audioDump;
 	long dumpFrames;
+	char* videoDump;
+	long videoDumpFrom;
 };
 
 static void _headlessShutdown(int signal);
@@ -83,6 +87,11 @@ static FILE* _dumpFrames = NULL;
 static long _dumpFramesTotal = 0;
 static long _dumpFramesWritten = 0;
 static unsigned _dumpPairs = 0;
+static struct VFile* _dumpVideo = NULL;
+static mColor* _videoBuffer = NULL;
+static long _dumpVideoFrom = 1;
+static unsigned _dumpVideoW = 0;
+static unsigned _dumpVideoH = 0;
 
 static void _dumpAudioRateChanged(struct mAVStream* stream, unsigned rate);
 static void _dumpAudioFrame(struct mAVStream* stream, int16_t left, int16_t right);
@@ -106,16 +115,35 @@ static void _dumpAudioFrame(struct mAVStream* stream, int16_t left, int16_t righ
 
 static void _dumpVideoFrame(struct mAVStream* stream, const mColor* buffer, size_t stride) {
 	UNUSED(stream);
-	UNUSED(buffer);
-	UNUSED(stride);
-	if (_dumpFramesTotal <= 0) {
+	if (_dumpFramesTotal <= 0 && !_dumpVideo) {
 		return;
 	}
 	++_dumpFramesWritten;
+	if (_dumpVideo && !buffer && _dumpFramesWritten == _dumpVideoFrom) {
+		mLOG(STATUS, ERROR, "Video dump: NULL pixel buffer; disabling video dump");
+		_dumpVideo->close(_dumpVideo);
+		_dumpVideo = NULL;
+	}
+	if (_dumpVideo && _dumpFramesWritten >= _dumpVideoFrom) {
+		if (!_dumpVideoW) {
+			core->currentVideoSize(core, &_dumpVideoW, &_dumpVideoH);
+			mLOG(STATUS, INFO, "Video dump: %ux%u, %zu bytes/px", _dumpVideoW, _dumpVideoH, sizeof(mColor));
+		}
+		size_t rowBytes = (size_t) _dumpVideoW * sizeof(mColor);
+		size_t rowStep = stride * sizeof(mColor);
+		const char* row = (const char*) buffer;
+		unsigned y;
+		for (y = 0; y < _dumpVideoH; ++y, row += rowStep) {
+			size_t wrc = _dumpVideo->write(_dumpVideo, row, rowBytes);
+			if (y == 0 && _dumpFramesWritten == _dumpVideoFrom) {
+				mLOG(STATUS, INFO, "Video dump first write: %zu of %zu errno=%d vf=%p from=%ld stride=%zu buf=%p px0=%08x", wrc, rowBytes, errno, (void*) _dumpVideo, _dumpVideoFrom, stride, (const void*) buffer, buffer ? buffer[0] : 0);
+			}
+		}
+	}
 	if (_dumpFrames) {
 		fprintf(_dumpFrames, "%ld,%u\n", _dumpFramesWritten, _dumpPairs);
 	}
-	if (_dumpFramesWritten >= _dumpFramesTotal) {
+	if (_dumpFramesTotal > 0 && _dumpFramesWritten >= _dumpFramesTotal) {
 		_closeDump();
 		_dispatchExiting = true;
 	}
@@ -125,6 +153,11 @@ static void _closeDump(void) {
 	if (_dumpFrames) {
 		fclose(_dumpFrames);
 		_dumpFrames = NULL;
+	}
+	if (_dumpVideo) {
+		_dumpVideo->close(_dumpVideo);
+		_dumpVideo = NULL;
+		mLOG(STATUS, INFO, "Video dump: %ld frames", _dumpFramesWritten);
 	}
 	if (!_dumpFile) {
 		return;
@@ -159,6 +192,14 @@ int main(int argc, char * argv[]) {
 			},
 			{
 				.name = "dump-frames",
+				.arg = true,
+			},
+			{
+				.name = "video-dump",
+				.arg = true,
+			},
+			{
+				.name = "video-dump-from",
 				.arg = true,
 			},
 			{0}
@@ -240,8 +281,24 @@ int main(int argc, char * argv[]) {
 		goto loadError;
 	}
 
-	if (headlessOpts.audioDump || headlessOpts.dumpFrames > 0) {
+	if (headlessOpts.audioDump || headlessOpts.dumpFrames > 0 || headlessOpts.videoDump) {
 		_dumpFramesTotal = headlessOpts.dumpFrames;
+		_dumpVideoFrom = headlessOpts.videoDumpFrom > 0 ? headlessOpts.videoDumpFrom : 1;
+		if (headlessOpts.videoDump) {
+			_dumpVideo = VFileOpen(headlessOpts.videoDump, O_CREAT | O_TRUNC | O_WRONLY);
+			if (!_dumpVideo) {
+				mLOG(STATUS, ERROR, "Failed to open video dump \"%s\"", headlessOpts.videoDump);
+				goto loadError;
+			}
+			unsigned videoW = 0, videoH = 0;
+			core->currentVideoSize(core, &videoW, &videoH);
+			_videoBuffer = malloc((size_t) videoW * videoH * sizeof(mColor));
+			if (!_videoBuffer) {
+				mLOG(STATUS, ERROR, "Failed to allocate %ux%u video buffer", videoW, videoH);
+				goto loadError;
+			}
+			core->setVideoBuffer(core, _videoBuffer, videoW);
+		}
 		if (headlessOpts.audioDump) {
 			_dumpFile = VFileOpen(headlessOpts.audioDump, O_CREAT | O_TRUNC | O_WRONLY);
 			if (!_dumpFile) {
@@ -488,6 +545,20 @@ static bool _parseLongHeadlessOpts(struct mSubParser* parser, const char* option
 			return false;
 		}
 		opts->dumpFrames = frames;
+		return true;
+	}
+	if (strcmp(option, "video-dump") == 0) {
+		free(opts->videoDump);
+		opts->videoDump = strdup(arg);
+		return true;
+	}
+	if (strcmp(option, "video-dump-from") == 0) {
+		errno = 0;
+		frames = strtol(arg, &parseEnd, 0);
+		if (errno || frames < 0 || *parseEnd) {
+			return false;
+		}
+		opts->videoDumpFrom = frames;
 		return true;
 	}
 	return false;
